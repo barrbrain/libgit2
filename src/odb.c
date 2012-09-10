@@ -350,12 +350,14 @@ int git_odb_add_alternate(git_odb *odb, git_odb_backend *backend, int priority)
 
 static int add_default_backends(git_odb *db, const char *objects_dir, int as_alternates)
 {
-	git_odb_backend *loose, *packed;
+	git_odb_backend /* *loose, */ *packed;
 
+#if 0
 	/* add the loose object backend */
 	if (git_odb_backend_loose(&loose, objects_dir, -1, 0) < 0 ||
 		add_backend_internal(db, loose, GIT_LOOSE_PRIORITY, as_alternates) < 0)
 		return -1;
+#endif
 
 	/* add the packed file backend */
 	if (git_odb_backend_pack(&packed, objects_dir) < 0 ||
