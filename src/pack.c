@@ -686,6 +686,11 @@ static git_off_t nth_packed_object_offset(const struct git_pack_file *p, uint32_
 	}
 }
 
+static int git__cmp_uint32_t(const void *a, const void *b) {
+	uint32_t c = *(uint32_t*)a, d =*(uint32_t*)b;
+	return c < d ? -1 : c == d ? 0 : 1;
+}
+
 int git_pack_foreach_entry(
 	struct git_pack_file *p,
 	int (*cb)(git_oid *oid, void *data),
@@ -694,6 +699,7 @@ int git_pack_foreach_entry(
 	const unsigned char *index = p->index_map.data, *current;
 	unsigned stride;
 	uint32_t i;
+	uint32_t *offsets;
 
 	if (index == NULL) {
 		int error;
@@ -712,21 +718,29 @@ int git_pack_foreach_entry(
 
 	index += 4 * 256;
 
+	offsets = git__malloc(sizeof(uint32_t) * 2 *  p->num_objects);
 	if (p->index_version > 1) {
+		for (i = 0; i < p->num_objects; i++)
+			offsets[i * 2] = ntohl(*(uint32_t*)&index[24 * p->num_objects + 4 * i]), offsets[i * 2 + 1] = i;
 		stride = 20;
 	} else {
+		for (i = 0; i < p->num_objects; i++)
+			offsets[i * 2] = ntohl(*(uint32_t*)&index[24 * i]), offsets[i * 2 + 1] = i;
 		stride = 24;
 		index += 4;
 	}
+	qsort(offsets, p->num_objects, 2 * sizeof(uint32_t), git__cmp_uint32_t);
 
-	current = index;
+
 	for (i = 0; i < p->num_objects; i++) {
-		if (cb((git_oid *)current, data))
+		current = index + stride * offsets[i * 2 + 1];
+		if (cb((git_oid *)current, data)) {
+			git__free(offsets);
 			return GIT_EUSER;
-
-		current += stride;
+		}
 	}
 
+	git__free(offsets);
 	return 0;
 }
 
