@@ -686,9 +686,8 @@ static git_off_t nth_packed_object_offset(const struct git_pack_file *p, uint32_
 	}
 }
 
-static int git__cmp_uint32_t(const void *a, const void *b) {
-	uint32_t c = *(uint32_t*)a, d =*(uint32_t*)b;
-	return c < d ? -1 : c == d ? 0 : 1;
+static int git__memcmp4(const void *a, const void *b) {
+	return memcmp(a, b, 4);
 }
 
 int git_pack_foreach_entry(
@@ -697,9 +696,9 @@ int git_pack_foreach_entry(
 	void *data)
 {
 	const unsigned char *index = p->index_map.data, *current;
-	unsigned stride;
 	uint32_t i;
-	uint32_t *offsets;
+	git_vector offsets;
+	git_vector oids;
 
 	if (index == NULL) {
 		int error;
@@ -718,29 +717,32 @@ int git_pack_foreach_entry(
 
 	index += 4 * 256;
 
-	offsets = git__malloc(sizeof(uint32_t) * 2 *  p->num_objects);
+	git_vector_init(&offsets, p->num_objects, git__memcmp4);
+	git_vector_init(&oids, p->num_objects, NULL);
 	if (p->index_version > 1) {
+		const unsigned char *off = index + 24 * p->num_objects;
 		for (i = 0; i < p->num_objects; i++)
-			offsets[i * 2] = ntohl(*(uint32_t*)&index[24 * p->num_objects + 4 * i]), offsets[i * 2 + 1] = i;
-		stride = 20;
+			git_vector_insert(&offsets, (void*)&off[4 * i]);
+		git_vector_sort(&offsets);
+		git_vector_foreach(&offsets, i, current)
+			git_vector_insert(&oids, (void*)&index[5 * (current - off)]);
 	} else {
 		for (i = 0; i < p->num_objects; i++)
-			offsets[i * 2] = ntohl(*(uint32_t*)&index[24 * i]), offsets[i * 2 + 1] = i;
-		stride = 24;
-		index += 4;
+			git_vector_insert(&offsets, (void*)&index[24 * i]);
+		git_vector_sort(&offsets);
+		git_vector_foreach(&offsets, i, current)
+			git_vector_insert(&oids, (void*)&current[4]);
 	}
-	qsort(offsets, p->num_objects, 2 * sizeof(uint32_t), git__cmp_uint32_t);
+	git_vector_free(&offsets);
 
-
-	for (i = 0; i < p->num_objects; i++) {
-		current = index + stride * offsets[i * 2 + 1];
+	git_vector_foreach(&oids, i, current) {
 		if (cb((git_oid *)current, data)) {
-			git__free(offsets);
+			git_vector_free(&oids);
 			return GIT_EUSER;
 		}
 	}
 
-	git__free(offsets);
+	git_vector_free(&oids);
 	return 0;
 }
 
