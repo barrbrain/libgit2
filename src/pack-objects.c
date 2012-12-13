@@ -69,6 +69,42 @@ static unsigned name_hash(const char *name)
 	return hash;
 }
 
+
+#define SIZE (8)
+#define MASK (SIZE - 1)
+
+static unsigned min_hash(const char *data, size_t length) {
+	int min = INT_MAX;
+	int max = INT_MIN;
+	int hi = 0;
+	int lo = 0;
+	int o = 0;
+	char w[SIZE] = { 0 };
+
+	if (!data || !length)
+		return 0;
+
+	while (--length) {
+		int h;
+		const char a = *data++;
+		const char d = w[o];
+		hi += a - d;
+		lo *= 3;
+		lo += a - d * 6561;
+		w[o] = a;
+		o = (o + 1) & MASK;
+		h = (hi << 16) ^ lo ^ hi;
+		h *= 0x85ebca6b;
+		h ^= (unsigned)(h) >> 13;
+		h *= 0xc2b2ae35;
+		h ^= (unsigned)(h) >> 16;
+		min = h < min ? h : min,
+		max = h > max ? h : max;
+	}
+
+	return (min << 16) | (max & 0xffff);
+}
+
 static int packbuilder_config(git_packbuilder *pb)
 {
 	git_config *config;
@@ -160,9 +196,11 @@ static void rehash(git_packbuilder *pb)
 int git_packbuilder_insert(git_packbuilder *pb, const git_oid *oid,
 			   const char *name)
 {
+	git_odb_object *obj;
 	git_pobject *po;
 	khiter_t pos;
 	int ret;
+	char ohex[41];
 
 	assert(pb && oid);
 
@@ -183,12 +221,20 @@ int git_packbuilder_insert(git_packbuilder *pb, const git_oid *oid,
 	po = pb->object_list + pb->nr_objects;
 	memset(po, 0x0, sizeof(*po));
 
-	if (git_odb_read_header(&po->size, &po->type, pb->odb, oid) < 0)
+	if (git_odb_read(&obj, pb->odb, oid) < 0)
 		return -1;
+	po->size = obj->raw.len;
+	po->type = obj->raw.type;
 
 	pb->nr_objects++;
 	git_oid_cpy(&po->id, oid);
-	po->hash = name_hash(name);
+	po->hash = obj->raw.type == GIT_OBJ_BLOB ? min_hash(obj->raw.data, obj->raw.len) : name_hash(name);
+	git_odb_object_free(obj);
+
+	git_oid_fmt(ohex, oid);
+	ohex[40] = '\0';
+	if (po->type == GIT_OBJ_BLOB)
+		fprintf(stderr, "%s %08x\n", ohex, po->hash);
 
 	pos = kh_put(oid, pb->object_ix, &po->id, &ret);
 	assert(ret != 0);
@@ -689,6 +735,12 @@ static int try_delta(git_packbuilder *pb, struct unpacked *trg,
 
 	/* Don't bother doing diffs between different types */
 	if (trg_object->type != src_object->type) {
+		*ret = -1;
+		return 0;
+	}
+
+	/* Don't bother doing diffs between different minhashes */
+	if (trg_object->hash != src_object->hash) {
 		*ret = -1;
 		return 0;
 	}
