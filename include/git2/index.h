@@ -82,6 +82,7 @@ typedef struct git_index_entry {
 	unsigned short flags_extended;
 
 	char *path;
+	unsigned int position;
 } git_index_entry;
 
 /** Representation of a resolve undo entry in the index. */

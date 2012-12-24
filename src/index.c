@@ -244,6 +244,17 @@ static unsigned int index_merge_mode(
 	return index_create_mode(mode);
 }
 
+static void sort_entries(git_index *index)
+{
+	unsigned int i;
+	git_index_entry *e;
+	if (index->entries.sorted)
+		return;
+	git_vector_sort(&index->entries);
+	git_vector_foreach(&index->entries, i, e)
+		e->position = i;
+}
+
 static void index_set_ignore_case(git_index *index, bool ignore_case)
 {
 	index->entries._cmp = ignore_case ? index_icmp : index_cmp;
@@ -251,7 +262,7 @@ static void index_set_ignore_case(git_index *index, bool ignore_case)
 	index->entries_search = ignore_case ? index_isrch : index_srch;
 	index->entries_search_path = ignore_case ? index_isrch_path : index_srch_path;
 	index->entries.sorted = 0;
-	git_vector_sort(&index->entries);
+	sort_entries(index);
 
 	index->reuc._cmp = ignore_case ? reuc_icmp : reuc_cmp;
 	index->reuc_search = ignore_case ? reuc_isrch : reuc_srch;
@@ -452,7 +463,7 @@ int git_index_write(git_index *index)
 		return create_index_error(-1,
 			"Failed to read index: The index is in-memory only");
 
-	git_vector_sort(&index->entries);
+	sort_entries(index);
 	git_vector_sort(&index->reuc);
 
 	if ((error = git_filebuf_open(
@@ -506,7 +517,7 @@ const git_index_entry *git_index_get_byindex(
 	git_index *index, size_t n)
 {
 	assert(index);
-	git_vector_sort(&index->entries);
+	sort_entries(index);
 	return git_vector_get(&index->entries, n);
 }
 
@@ -680,6 +691,7 @@ static int index_insert(git_index *index, git_index_entry **entry_p, int replace
 {
 	size_t path_length;
 	khiter_t pos;
+	unsigned int position;
 	git_index_entry *existing = NULL;
 	git_index_entry *entry;
 
@@ -711,12 +723,15 @@ static int index_insert(git_index *index, git_index_entry **entry_p, int replace
 	if (!replace || !existing) {
 		int ret;
 		pos = kh_put(index_entry, index->entry_map, entry, &ret);
+		entry->position = index->entries.length;
 		return git_vector_insert(&index->entries, entry);
 	}
 
 	/* exists, replace it */
+	position = existing->position;
 	git__free(existing->path);
 	*existing = *entry;
+	existing->position = position;
 	git__free(entry);
 	*entry_p = existing;
 	return 0;
@@ -795,7 +810,7 @@ int git_index_remove(git_index *index, const char *path, int stage)
 	int error;
 	git_index_entry *entry;
 
-	git_vector_sort(&index->entries);
+	sort_entries(index);
 
 	if ((position = index_find(index, path, stage)) < 0)
 		return position;
@@ -804,6 +819,7 @@ int git_index_remove(git_index *index, const char *path, int stage)
 	if (entry != NULL)
 		git_tree_cache_invalidate_path(index->tree, entry->path);
 
+	assert (entry->position == (unsigned int)position);
 	error = git_vector_remove(&index->entries, (unsigned int)position);
 
 	if (!error) {
@@ -811,6 +827,10 @@ int git_index_remove(git_index *index, const char *path, int stage)
 		pos = kh_get(index_entry, index->entry_map, entry);
 		kh_del(index_entry, index->entry_map, pos);
 		index_entry_free(entry);
+		while ((unsigned int)position < index->entries.length) {
+			git_index_entry *entry = git_vector_get(&index->entries, position++);
+			entry->position--;
+		}
 	}
 
 	return error;
@@ -818,14 +838,24 @@ int git_index_remove(git_index *index, const char *path, int stage)
 
 static int index_find(git_index *index, const char *path, int stage)
 {
-	struct entry_srch_key srch_key;
+	git_index_entry srch_key;
+	const git_index_entry *entry;
+	khiter_t pos;
 
 	assert(path);
 
-	srch_key.path = path;
-	srch_key.stage = stage;
+	srch_key.path = (char *)path;
+	srch_key.flags = (stage << GIT_IDXENTRY_STAGESHIFT) & GIT_IDXENTRY_STAGEMASK;
 
-	return git_vector_bsearch2(&index->entries, index->entries_search, &srch_key);
+	pos = kh_get(index_entry, index->entry_map, &srch_key);
+
+	if (pos == kh_end(index->entry_map))
+		return -1;
+
+	entry = kh_key(index->entry_map, pos);
+
+	assert(git_vector_get(&index->entries, entry->position) == entry);
+	return entry->position;
 }
 
 int git_index_find(git_index *index, const char *path)
@@ -834,6 +864,7 @@ int git_index_find(git_index *index, const char *path)
 
 	assert(index && path);
 
+	sort_entries(index);
 	if ((pos = git_vector_bsearch2(
 			&index->entries, index->entries_search_path, path)) < 0)
 		return pos;
@@ -843,6 +874,8 @@ int git_index_find(git_index *index, const char *path)
 	 */
 	while (pos > 0) {
 		const git_index_entry *prev = git_vector_get(&index->entries, pos-1);
+
+		assert(prev->position == (unsigned int)(pos-1));
 
 		if (index->entries_cmp_path(prev->path, path) != 0)
 			break;
@@ -861,7 +894,7 @@ size_t git_index__prefix_position(git_index *index, const char *path)
 	srch_key.path = path;
 	srch_key.stage = 0;
 
-	git_vector_sort(&index->entries);
+	sort_entries(index);
 	git_vector_bsearch3(
 		&pos, &index->entries, index->entries_search, &srch_key);
 
@@ -970,6 +1003,7 @@ int git_index_conflict_remove(git_index *index, const char *path)
 
 	while (pos < posmax) {
 		khiter_t k;
+		unsigned int position;
 		conflict_entry = git_vector_get(&index->entries, pos);
 
 		if (index->entries_cmp_path(conflict_entry->path, path) != 0)
@@ -986,6 +1020,11 @@ int git_index_conflict_remove(git_index *index, const char *path)
 		k = kh_get(index_entry, index->entry_map, conflict_entry);
 		kh_del(index_entry, index->entry_map, k);
 		index_entry_free(conflict_entry);
+		position = pos;
+		while (position < index->entries.length) {
+			git_index_entry *entry = git_vector_get(&index->entries, position++);
+			entry->position--;
+		}
 		posmax--;
 	}
 
@@ -1006,8 +1045,12 @@ static int index_conflicts_match(const git_vector *v, size_t idx)
 
 void git_index_conflict_cleanup(git_index *index)
 {
+	unsigned int i;
+	git_index_entry *e;
 	assert(index);
 	git_vector_remove_matching(&index->entries, index_conflicts_match);
+	git_vector_foreach(&index->entries, i, e)
+		e->position = i;
 }
 
 int git_index_has_conflicts(const git_index *index)
@@ -1354,6 +1397,7 @@ static int parse_index(git_index *index, const char *buffer, size_t buffer_size)
 
 		if (git_vector_insert(&index->entries, entry) < 0)
 			return -1;
+		entry->position = index->entries.length - 1;
 
 		kh_put(index_entry, index->entry_map, entry, &ret);
 
