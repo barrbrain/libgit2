@@ -25,6 +25,7 @@ struct git_index {
 
 	git_futils_filestamp stamp;
 	git_vector entries;
+	size_t entries_removed;
 
 	git_index_entry_map *entry_map;
 
