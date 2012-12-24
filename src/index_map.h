@@ -22,7 +22,7 @@ GIT_INLINE(khint_t) hash_git_index_entry(const git_index_entry *entry)
 {
 	const char *s = entry->path;
 	khint_t c;
-	khint_t h = git_index_entry_stage(entry);
+	khint_t h = (entry->flags & GIT_IDXENTRY_STAGEMASK) >> GIT_IDXENTRY_STAGESHIFT;
 	assert(s);
 	while ((c = *s++))
 		h = c + (h << 6) + (h << 16) - h;
@@ -31,7 +31,7 @@ GIT_INLINE(khint_t) hash_git_index_entry(const git_index_entry *entry)
 
 GIT_INLINE(khint_t) git_index_entry_equal(const git_index_entry *a, const git_index_entry *b)
 {
-	return git_index_entry_stage(a) == git_index_entry_stage(b)
+	return (a->flags & GIT_IDXENTRY_STAGEMASK) == (b->flags & GIT_IDXENTRY_STAGEMASK)
 		&& ((!a->path && !b->path) || (a->path && b->path && !strcmp(a->path, b->path)));
 }
 
