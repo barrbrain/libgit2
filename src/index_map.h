@@ -31,7 +31,7 @@ GIT_INLINE(khint_t) hash_git_index_entry(const git_index_entry *entry)
 
 GIT_INLINE(khint_t) git_index_entry_equal(const git_index_entry *a, const git_index_entry *b)
 {
-	return git_index_entry_stage(a) == git_index_entry_stage(a)
+	return git_index_entry_stage(a) == git_index_entry_stage(b)
 		&& ((!a->path && !b->path) || (a->path && b->path && !strcmp(a->path, b->path)));
 }
 
