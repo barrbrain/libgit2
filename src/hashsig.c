@@ -12,9 +12,9 @@ typedef uint64_t hashsig_state;
 
 #define HASHSIG_SCALE 100
 
-#define HASHSIG_HASH_WINDOW 32
+#define HASHSIG_HASH_WINDOW 8
 #define HASHSIG_HASH_START	0
-#define HASHSIG_HASH_SHIFT  5
+#define HASHSIG_HASH_SHIFT  3
 #define HASHSIG_HASH_MASK   0x7FFFFFFF
 
 #define HASHSIG_HEAP_SIZE ((1 << 7) - 1)
@@ -142,6 +142,21 @@ GIT_INLINE(bool) hashsig_include_char(
 	return true;
 }
 
+/* This function is in the public domain.
+ * Murmur3 was created by Austin Appleby,
+ * and the C port and general tidying up
+ * was done by Peter Scott. */
+static inline uint32_t fmix32(uint32_t h)
+{
+	h ^= h >> 16;
+	h *= 0x85ebca6b;
+	h ^= h >> 13;
+	h *= 0xc2b2ae35;
+	h ^= h >> 16;
+
+	return h;
+}
+
 static void hashsig_initial_window(
 	git_hashsig *sig,
 	const char **data,
@@ -183,8 +198,8 @@ static void hashsig_initial_window(
 	/* insert initial hash if we just finished */
 
 	if (win_len == HASHSIG_HASH_WINDOW) {
-		hashsig_heap_insert(&sig->mins, state);
-		hashsig_heap_insert(&sig->maxs, state);
+		hashsig_heap_insert(&sig->mins, fmix32(state));
+		hashsig_heap_insert(&sig->maxs, fmix32(state));
 		sig->considered = 1;
 	}
 
@@ -224,8 +239,8 @@ static int hashsig_add_hashes(
 		state = (state * HASHSIG_HASH_SHIFT) & HASHSIG_HASH_MASK;
 		state = (state + ch) & HASHSIG_HASH_MASK;
 
-		hashsig_heap_insert(&sig->mins, state);
-		hashsig_heap_insert(&sig->maxs, state);
+		hashsig_heap_insert(&sig->mins, fmix32(state));
+		hashsig_heap_insert(&sig->maxs, fmix32(state));
 		sig->considered++;
 
 		prog->window[prog->win_pos] = ch;
