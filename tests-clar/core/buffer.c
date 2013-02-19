@@ -891,7 +891,7 @@ void test_core_buffer__similarity_metric_whitespace(void)
 					if (i == j)
 						cl_assert_equal_i(100, sim);
 					else
-						cl_assert(sim < 64); /* expect pretty different */
+						cl_assert(sim < 75); /* expect pretty different */
 				} else {
 					cl_assert_equal_i(100, sim);
 				}

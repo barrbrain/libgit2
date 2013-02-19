@@ -15,7 +15,7 @@ typedef uint64_t hashsig_state;
 #define HASHSIG_HASH_WINDOW 8
 #define HASHSIG_HASH_START	0
 #define HASHSIG_HASH_SHIFT  3
-#define HASHSIG_HASH_MASK   0x7FFFFFFF
+#define HASHSIG_HASH_MASK   0x000FFFFF
 
 #define HASHSIG_HEAP_SIZE ((1 << 7) - 1)
 
@@ -180,12 +180,13 @@ static void hashsig_initial_window(
 	end  = scan + size;
 
 	while (scan < end && win_len < HASHSIG_HASH_WINDOW) {
-		char ch = *scan++;
+		unsigned char ch = *scan++;
 
 		if (!hashsig_include_char(ch, sig->opt, &prog->saw_lf))
 			continue;
 
-		state = (state * HASHSIG_HASH_SHIFT + ch) & HASHSIG_HASH_MASK;
+		state = (state & ~HASHSIG_HASH_MASK) | ((state * HASHSIG_HASH_SHIFT + ch) & HASHSIG_HASH_MASK);
+		state += ch << 20;
 
 		if (!win_len)
 			shift_n = 1;
@@ -228,16 +229,16 @@ static int hashsig_add_hashes(
 	/* advance window, adding new chars and removing old */
 
 	for (; scan < end; ++scan) {
-		char ch = *scan;
+		unsigned char ch = *scan;
 
 		if (!hashsig_include_char(ch, sig->opt, &prog->saw_lf))
 			continue;
 
-		rmv = shift_n * prog->window[prog->win_pos];
+		rmv = (shift_n + (1 << 20)) * prog->window[prog->win_pos];
 
-		state = (state - rmv) & HASHSIG_HASH_MASK;
-		state = (state * HASHSIG_HASH_SHIFT) & HASHSIG_HASH_MASK;
-		state = (state + ch) & HASHSIG_HASH_MASK;
+		state = (state - rmv);
+		state = (state & ~HASHSIG_HASH_MASK) | ((state * HASHSIG_HASH_SHIFT) & HASHSIG_HASH_MASK);
+		state = state + ch + (ch << 20);
 
 		hashsig_heap_insert(&sig->mins, fmix32(state));
 		hashsig_heap_insert(&sig->maxs, fmix32(state));
